@@ -56,8 +56,10 @@ uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_
 `Coder(workspace)` is these capabilities, in this order:
 
 1. A `Capability` carrying the default instructions, plus any `instructions=` you pass.
-2. [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/)`(root_dir=workspace, content_hashes=False, max_read_chars=60000, tools=FILE_TOOL_NAMES)`, where
+2. [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/)`(root_dir=workspace, content_hashes=False, max_read_chars=60000, tools=FILE_TOOL_NAMES, max_retries=5)`, where
    `FILE_TOOL_NAMES` is `read_file`, `write_file`, `edit_file`, `list_files`, and `grep`.
+   Each file tool allows five consecutive retries for correctable errors such as denied paths or stale edits.
+   Success resets that tool's count; a sixth consecutive error ends the run. Path restrictions still apply.
 3. [`Shell`](https://pydantic.dev/docs/ai/harness/shell/)`(cwd=workspace, denied_commands=[], allow_interactive=True, default_timeout=270, denied_env_patterns=LLM_API_KEY_ENV_PATTERNS, tools=['shell'])`.
 4. [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/)`(workspace_dir=workspace, expose_inventory_tool=False)` for repository instructions and structure.
    Pass `repo_context=False` to leave it out when the agent already binds its own `RepoContext`, so the
@@ -120,6 +122,9 @@ variables are filtered from command environments; other host credentials and fil
 
 The default instructions keep engineering guidance brief: autonomous investigation and completion,
 focused changes and verification, and pragmatic DRY, YAGNI, SOLID, and the Zen of Python.
+They also ask the agent to leave only the requested change in the project: use inline shell scripts
+for checks, add tests where the project already has them, and delete scratch files it created before finishing.
+This is instruction guidance, not automatic file deletion.
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.
 Use it for additional policy, such as file-size limits or a preferred verification workflow.

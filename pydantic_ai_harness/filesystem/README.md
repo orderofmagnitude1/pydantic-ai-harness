@@ -271,14 +271,14 @@ reject them.
 ## Configuration
 
 ```python
-from pydantic_ai_harness import FileSystem
+from pydantic_ai_harness.filesystem import DEFAULT_TOOL_NAMES, FileSystem
 
 FileSystem(
     root_dir='.',                  # str | Path -- sandbox root
     cwd=None,                      # where relative paths resolve from (defaults to root_dir)
     allowed_patterns=[],           # allowlist globs (empty = allow all)
     denied_patterns=[],            # denylist globs
-    protected_patterns=[...],      # read-only globs (defaults to secrets/.git)
+    protected_patterns=['.git/*', '.env', '.env.*', '*.pem', '*.key', '**/secrets*'],  # read-only globs
     max_read_lines=2000,           # cap for a single read_file
     max_read_chars=None,           # optional cap on a whole read_file result, ending on a complete line
     max_list_results=1000,         # cap for list_directory
@@ -287,12 +287,19 @@ FileSystem(
     read_only=False,               # keep only READ_ONLY_TOOL_NAMES
     content_hashes=True,           # report hashes and accept expected_hash
     tools=DEFAULT_TOOL_NAMES,      # which tools to register (add 'list_files', 'grep')
+    max_retries=None,              # per-tool consecutive retries (None = the agent's budget)
 )
 ```
 
-The integer limits must be positive; they are validated at construction. A
+The read/list/search/find limits must be positive; they are validated at construction. A
 walker that hits its cap ends its output with a `[... truncated at N ...]`
 marker, and only when a further entry was actually dropped.
+
+Each file tool uses the agent's retry budget by default. Set `max_retries` to a non-negative
+integer to override it (`0` fails on the first error); negative values, booleans, and non-integers
+raise `ValueError`. A successful call resets that tool's consecutive failure count. Retrying
+does not change path permissions, read-only mode, protected paths, or approval requirements.
+This uses core's existing tool retry handling and adds no telemetry spans of its own.
 
 ## Agent spec (YAML/JSON)
 

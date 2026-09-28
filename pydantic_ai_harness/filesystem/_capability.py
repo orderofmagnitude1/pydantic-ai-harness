@@ -98,6 +98,14 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     `read_only` further narrows the selection to `READ_ONLY_TOOL_NAMES`.
     """
 
+    max_retries: int | None = field(default=None, kw_only=True)
+    """Consecutive retries each file tool allows before the run fails.
+
+    A denied path, a missing parent, or a stale edit asks the model to retry;
+    a success resets the count. `None` uses the agent's tool retry budget.
+    This does not change path permissions or approve a denied operation.
+    """
+
     def __post_init__(self) -> None:
         # Runtime validation: dataclass field annotations are advisory, not enforced.
         # A config-driven caller could pass a string that would otherwise propagate.
@@ -112,6 +120,8 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         for name, value in values.items():
             if not isinstance(value, int) or value <= 0:
                 raise ValueError(f'{name} must be a positive integer, got {value!r}')
+        if self.max_retries is not None and (type(self.max_retries) is not int or self.max_retries < 0):
+            raise ValueError(f'max_retries must be a non-negative integer, got {self.max_retries!r}')
 
     def get_toolset(self) -> FileSystemToolset[AgentDepsT] | FilteredToolset[AgentDepsT]:
         """Build and return the filesystem toolset."""
@@ -129,6 +139,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
             cwd=None if self.cwd is None else Path(self.cwd),
             content_hashes=self.content_hashes,
             tools=self.tools,
+            max_retries=self.max_retries,
         )
         if self.read_only:
             return FilteredToolset(toolset, lambda ctx, tool: tool.name in READ_ONLY_TOOL_NAMES)

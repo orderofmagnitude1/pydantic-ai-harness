@@ -6,11 +6,12 @@ from pathlib import Path
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness.coder import Coder
 
-from .._tool_calls import call_tool
+from .._tool_calls import call_tool, call_tools
 
 pytestmark = pytest.mark.anyio
 
@@ -62,8 +63,31 @@ class TestCoder:
         default = guidance.removesuffix('\n' + extra_instructions) if extra_instructions else guidance
         assert len(default.split()) < 180
         assert all(principle in default for principle in ('DRY', 'YAGNI', 'SOLID'))
+        assert 'delete any scratch files you created' in default
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
+
+    async def test_file_tool_mistakes_do_not_end_the_run(self, tmp_path: Path) -> None:
+        outside = tmp_path / 'outside.txt'
+        outside.write_text('unchanged')
+        project = tmp_path / 'project'
+        project.mkdir()
+        denied: tuple[str, dict[str, object]] = ('write_file', {'path': '../outside.txt', 'content': 'x'})
+        coder = Coder[None](project, repo_context=False)
+        results = await call_tools([coder], [denied] * 5)
+        assert len(results) == 5
+        assert all('outside the root directory' in result for result in results)
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 5'):
+            await call_tools([coder], [denied] * 6)
+        assert outside.read_text() == 'unchanged'
+
+    async def test_retry_budget_does_not_allow_protected_writes(self, tmp_path: Path) -> None:
+        protected = tmp_path / '.env.local'
+        protected.write_text('synthetic sentinel')
+        denied: tuple[str, dict[str, object]] = ('write_file', {'path': '.env.local', 'content': 'x'})
+        results = await call_tools([Coder[None](tmp_path, repo_context=False)], [denied] * 5)
+        assert all('protected' in result for result in results)
+        assert protected.read_text() == 'synthetic sentinel'
 
     @pytest.mark.parametrize('repo_context', [True, False])
     async def test_repo_context_is_optional(self, tmp_path: Path, repo_context: bool) -> None:
