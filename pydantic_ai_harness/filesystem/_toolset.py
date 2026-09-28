@@ -487,8 +487,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         cwd: Path | None = None,
         content_hashes: bool = True,
         tools: Sequence[str] = DEFAULT_TOOL_NAMES,
+        max_retries: int | None = None,
     ) -> None:
-        super().__init__(id=id)
+        super().__init__(id=id, max_retries=max_retries)
         self._root = root_dir.resolve()
         self._real_root = Path(os.path.realpath(self._root))
         self._cwd = self._root if cwd is None else cwd.resolve()

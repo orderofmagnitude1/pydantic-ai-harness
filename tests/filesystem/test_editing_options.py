@@ -5,11 +5,12 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness.filesystem import FILE_SYSTEM_TOOL_NAMES, FileSystem, FileSystemToolset, Replacement
 
-from .._tool_calls import call_tool
+from .._tool_calls import call_tool, call_tools
 
 pytestmark = pytest.mark.anyio
 
@@ -273,3 +274,57 @@ class TestCwd:
         project.mkdir(parents=True)
         result = await call(tmp_path / 'root', 'read_file', {'path': '../../outside.txt'}, cwd=project)
         assert 'outside the root directory' in result
+
+
+class TestMaxRetries:
+    DENIED_WRITE: tuple[str, dict[str, object]] = ('write_file', {'path': '../outside.txt', 'content': 'x'})
+
+    async def test_default_is_the_agent_budget(self, tmp_path: Path) -> None:
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'write_file' exceeded max retries count of 1"):
+            await call_tools([FileSystem[None](root_dir=tmp_path)], [self.DENIED_WRITE] * 2)
+
+    @pytest.mark.parametrize('budget', [0, 3])
+    async def test_budget_bounds_consecutive_failures(self, tmp_path: Path, budget: int) -> None:
+        capabilities = [FileSystem[None](root_dir=tmp_path, max_retries=budget)]
+        results = await call_tools(capabilities, [self.DENIED_WRITE] * budget)
+        assert len(results) == budget
+        assert all('outside the root directory' in result for result in results)
+        with pytest.raises(UnexpectedModelBehavior, match=f'exceeded max retries count of {budget}'):
+            await call_tools(capabilities, [self.DENIED_WRITE] * (budget + 1))
+
+    async def test_success_resets_the_same_tools_budget(self, tmp_path: Path) -> None:
+        successful: tuple[str, dict[str, object]] = ('write_file', {'path': 'inside.txt', 'content': 'ok'})
+        results = await call_tools(
+            [FileSystem[None](root_dir=tmp_path, max_retries=2)],
+            [self.DENIED_WRITE] * 2 + [successful] + [self.DENIED_WRITE] * 2,
+        )
+        assert len(results) == 5
+        assert (tmp_path / 'inside.txt').read_text() == 'ok'
+
+    async def test_stale_edit_can_recover_without_changing_failed_target(self, tmp_path: Path) -> None:
+        target = tmp_path / 'file.txt'
+        target.write_text('current')
+        stale: tuple[str, dict[str, object]] = (
+            'edit_file',
+            {'path': 'file.txt', 'old_text': 'stale', 'new_text': 'wrong'},
+        )
+        corrected: tuple[str, dict[str, object]] = (
+            'edit_file',
+            {'path': 'file.txt', 'old_text': 'current', 'new_text': 'updated'},
+        )
+        results = await call_tools([FileSystem[None](root_dir=tmp_path, max_retries=3)], [stale] * 3 + [corrected])
+        assert all('not found' in result for result in results[:3])
+        assert target.read_text() == 'updated'
+
+    @pytest.mark.parametrize('read_only', [False, True])
+    async def test_read_budget_survives_read_only_filter(self, tmp_path: Path, read_only: bool) -> None:
+        missing: tuple[str, dict[str, object]] = ('read_file', {'path': 'missing.txt'})
+        capabilities = [FileSystem[None](root_dir=tmp_path, read_only=read_only, max_retries=2)]
+        assert len(await call_tools(capabilities, [missing] * 2)) == 2
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 2'):
+            await call_tools(capabilities, [missing] * 3)
+
+    @pytest.mark.parametrize('budget', [-1, 1.5, '3', True, False])
+    def test_invalid_budget_is_rejected(self, budget: object) -> None:
+        with pytest.raises(ValueError, match='max_retries must be a non-negative integer'):
+            FileSystem(max_retries=budget)  # pyright: ignore[reportArgumentType]

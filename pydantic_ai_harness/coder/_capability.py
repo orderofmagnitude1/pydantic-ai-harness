@@ -34,10 +34,17 @@ MAX_READ_CHARS = 60000
 MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
+MAX_FILE_TOOL_RETRIES = 5
+"""Consecutive retries per file tool, allowing correction without ending a long run."""
+
 
 def _file_system(workspace: Path, *, unrestricted: bool) -> FileSystem[AgentDepsT]:
     file_system = FileSystem[AgentDepsT](
-        root_dir=workspace, content_hashes=False, max_read_chars=MAX_READ_CHARS, tools=FILE_TOOL_NAMES
+        root_dir=workspace,
+        content_hashes=False,
+        max_read_chars=MAX_READ_CHARS,
+        tools=FILE_TOOL_NAMES,
+        max_retries=MAX_FILE_TOOL_RETRIES,
     )
     if unrestricted:
         return replace(file_system, root_dir=workspace.anchor, cwd=workspace, protected_patterns=[])
